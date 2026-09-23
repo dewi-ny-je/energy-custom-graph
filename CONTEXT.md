@@ -44,6 +44,10 @@ _Avoid_: Signal color, base color
 A series backed by one Home Assistant statistic ID.
 _Avoid_: Long-term series, entity series
 
+**Attribute series**:
+A statistic series or calculation term that reads a numeric entity attribute from raw history instead of the entity state; the card aggregates it into the aggregation interval itself.
+_Avoid_: Attribute statistic, attribute sensor
+
 **External statistic**:
 A Home Assistant statistic that has statistic metadata but no matching entity state.
 _Avoid_: Entity, raw-only entity

@@ -27,6 +27,10 @@ import type {
 import { DEFAULT_COLORS } from "./chart/series-builder";
 import { fetchEnergyPreferences } from "./data/energy";
 import {
+  DEFAULT_ATTRIBUTE_STAT_TYPE,
+  getNumericAttributeNames,
+} from "./data/attributes";
+import {
   getStatisticLabel,
   getStatisticMetadata,
   type StatisticsMetaData,
@@ -1067,7 +1071,7 @@ export class EnergyCustomGraphCardEditor
     if (source === "calculation") {
       const terms = series.calculation?.terms ?? [];
       for (const term of terms) {
-        if (!normalizeStatisticId(term.statistic_id)) {
+        if (!normalizeStatisticId(term.statistic_id) || term.attribute?.trim()) {
           continue;
         }
         const issue = this._getStatisticIssue(
@@ -1078,6 +1082,9 @@ export class EnergyCustomGraphCardEditor
           return issue;
         }
       }
+      return undefined;
+    }
+    if (series.attribute?.trim()) {
       return undefined;
     }
     return this._getStatisticIssue(series.statistic_id, series.stat_type);
@@ -2384,7 +2391,9 @@ export class EnergyCustomGraphCardEditor
       return "No entity selected";
     }
     const metadata = this._getStatisticMetadata(id);
-    return getStatisticLabel(this.hass, id, metadata);
+    const label = getStatisticLabel(this.hass, id, metadata);
+    const attribute = series.attribute?.trim();
+    return attribute ? `${label} · ${attribute}` : label;
   }
 
   private _formatChartType(type: EnergyCustomGraphChartType): string {
@@ -2573,11 +2582,14 @@ export class EnergyCustomGraphCardEditor
       return html`<p>Loading...</p>`;
     }
     const id = normalizeStatisticId(series.statistic_id);
+    const attribute = series.attribute?.trim() || undefined;
     const resolution = this._resolveStatisticSource(id);
-    const issue = this._getStatisticIssue(id, series.stat_type);
+    const issue = attribute ? undefined : this._getStatisticIssue(id, series.stat_type);
     const metadata = resolution.metadata;
-    const statTypeDisabled = !metadata;
-    const current = series.stat_type ?? selectDefaultStatisticType(metadata) ?? "";
+    const statTypeDisabled = !metadata && !attribute;
+    const current = attribute
+      ? series.stat_type ?? DEFAULT_ATTRIBUTE_STAT_TYPE
+      : series.stat_type ?? selectDefaultStatisticType(metadata) ?? "";
 
     return html`
       <ha-entity-picker
@@ -2588,6 +2600,9 @@ export class EnergyCustomGraphCardEditor
         @value-changed=${(ev: CustomEvent) =>
           this._handleSeriesStatisticChanged(index, ev.detail.value || undefined)}
       ></ha-entity-picker>
+      ${this._renderAttributeField(id, attribute, (value) =>
+        this._handleSeriesAttributeChanged(index, value)
+      )}
       <div class="field">
         <label>Statistic type</label>
         <select
@@ -2604,7 +2619,8 @@ export class EnergyCustomGraphCardEditor
           </option>
           ${STAT_TYPE_OPTIONS.map(
             (option) => {
-              const supported = isStatisticTypeSupported(metadata, option.value);
+              const supported =
+                !!attribute || isStatisticTypeSupported(metadata, option.value);
               return html`<option
                 value=${option.value}
                 ?selected=${current === option.value}
@@ -2823,7 +2839,9 @@ export class EnergyCustomGraphCardEditor
     const expanded = this._expandedTermKeys.has(termKey);
     const operationLabel = this._formatOperation(operation);
     const descriptor = term.statistic_id && term.statistic_id.trim().length
-      ? term.statistic_id.trim()
+      ? term.attribute?.trim()
+        ? `${term.statistic_id.trim()} · ${term.attribute.trim()}`
+        : term.statistic_id.trim()
       : term.constant !== undefined
         ? `Constant: ${term.constant}`
         : "No input selected";
@@ -2902,11 +2920,14 @@ export class EnergyCustomGraphCardEditor
       { value: "constant", label: "Constant" },
     ];
     const id = normalizeStatisticId(term.statistic_id);
+    const attribute = term.attribute?.trim() || undefined;
     const resolution = this._resolveStatisticSource(id);
-    const issue = this._getStatisticIssue(id, term.stat_type);
+    const issue = attribute ? undefined : this._getStatisticIssue(id, term.stat_type);
     const metadata = resolution.metadata;
-    const statTypeDisabled = !metadata;
-    const current = term.stat_type ?? selectDefaultStatisticType(metadata) ?? "";
+    const statTypeDisabled = !metadata && !attribute;
+    const current = attribute
+      ? term.stat_type ?? DEFAULT_ATTRIBUTE_STAT_TYPE
+      : term.stat_type ?? selectDefaultStatisticType(metadata) ?? "";
     return html`
       <div class="field full-width">
         <label>Input type</label>
@@ -2924,6 +2945,9 @@ export class EnergyCustomGraphCardEditor
               @value-changed=${(ev: CustomEvent) =>
                 this._handleTermStatisticChanged(seriesIndex, termIndex, ev.detail.value || undefined)}
             ></ha-entity-picker>
+            ${this._renderAttributeField(id, attribute, (value) =>
+              this._handleTermAttributeChanged(seriesIndex, termIndex, value)
+            )}
             <div class="field">
               <label>Statistic type</label>
               <select
@@ -2941,7 +2965,8 @@ export class EnergyCustomGraphCardEditor
                 </option>
                 ${STAT_TYPE_OPTIONS.map(
                   (option) => {
-                    const supported = isStatisticTypeSupported(metadata, option.value);
+                    const supported =
+                      !!attribute || isStatisticTypeSupported(metadata, option.value);
                     return html`<option
                       value=${option.value}
                       ?selected=${current === option.value}
@@ -3057,6 +3082,7 @@ export class EnergyCustomGraphCardEditor
         }
       } else {
         draft.statistic_id = undefined;
+        draft.attribute = undefined;
         draft.stat_type = undefined;
         draft.multiply = undefined;
         draft.add = undefined;
@@ -4461,6 +4487,7 @@ export class EnergyCustomGraphCardEditor
     this._mutateTerm(seriesIndex, termIndex, (draft) => {
       if (key === "constant" && value !== undefined && value !== "") {
         draft.statistic_id = undefined;
+        draft.attribute = undefined;
         draft.stat_type = undefined;
         draft.multiply = undefined;
         draft.add = undefined;
@@ -4547,20 +4574,136 @@ export class EnergyCustomGraphCardEditor
     const series = [...(this._config!.series ?? [])];
     const current = { ...series[index] };
     current.statistic_id = statisticId || undefined;
-    delete current.stat_type;
+    const keepAttribute = this._entityHasAttribute(statisticId, current.attribute);
+    if (!keepAttribute) {
+      delete current.attribute;
+      delete current.stat_type;
+    }
     series[index] = current;
     this._updateConfig("series", series);
     this._expandedSeries = new Set(this._expandedSeries).add(index);
     this._setSeriesOptionGroupExpanded(index, "source", true);
-    if (statisticId) {
+    if (statisticId && !keepAttribute) {
       void this._autoSelectSeriesStatisticType(index, statisticId);
+    }
+  }
+
+  private _entityHasAttribute(
+    entityId: string | undefined,
+    attribute: string | undefined
+  ): boolean {
+    const name = attribute?.trim();
+    if (!entityId || !name) {
+      return false;
+    }
+    return getNumericAttributeNames(this.hass, entityId).includes(name);
+  }
+
+  private _renderAttributeField(
+    entityId: string | undefined,
+    attribute: string | undefined,
+    onChange: (attribute: string | undefined) => void
+  ) {
+    const names = getNumericAttributeNames(this.hass, entityId);
+    if (attribute && !names.includes(attribute)) {
+      names.unshift(attribute);
+    }
+    if (!attribute && !names.length) {
+      return nothing;
+    }
+    const stateObj = entityId ? this.hass?.states?.[entityId] : undefined;
+    const formatter = (this.hass as unknown as {
+      formatEntityAttributeName?: (stateObj: unknown, attribute: string) => string;
+    } | undefined)?.formatEntityAttributeName;
+    const formatName = (name: string) => {
+      if (!stateObj || typeof formatter !== "function") {
+        return name;
+      }
+      try {
+        const formatted = formatter(stateObj, name);
+        return formatted && formatted !== name ? `${formatted} (${name})` : name;
+      } catch (_error) {
+        return name;
+      }
+    };
+    return html`
+      <div class="field">
+        <label>Attribute</label>
+        <select
+          @change=${(ev: Event) =>
+            onChange((ev.target as HTMLSelectElement).value || undefined)}
+        >
+          <option value="" ?selected=${!attribute}>None (entity state)</option>
+          ${names.map(
+            (name) =>
+              html`<option value=${name} ?selected=${attribute === name}>
+                ${formatName(name)}
+              </option>`
+          )}
+        </select>
+        ${attribute
+          ? this._renderEditorHelpHint(
+              "Attribute values are read from recorder history and aggregated by the card. Statistics are not used.",
+              "info"
+            )
+          : nothing}
+      </div>
+    `;
+  }
+
+  private _handleSeriesAttributeChanged(index: number, attribute: string | undefined) {
+    const current = this._config?.series?.[index];
+    if (!current) {
+      return;
+    }
+    const next = { ...current };
+    if (attribute) {
+      if (!next.attribute) {
+        next.stat_type = DEFAULT_ATTRIBUTE_STAT_TYPE;
+      }
+      next.attribute = attribute;
+    } else {
+      delete next.attribute;
+      delete next.stat_type;
+    }
+    this._replaceSeries(index, next);
+    const statisticId = normalizeStatisticId(next.statistic_id);
+    if (!attribute && statisticId) {
+      void this._autoSelectSeriesStatisticType(index, statisticId);
+    }
+  }
+
+  private _handleTermAttributeChanged(
+    seriesIndex: number,
+    termIndex: number,
+    attribute: string | undefined
+  ) {
+    let statisticId: string | undefined;
+    this._mutateTerm(seriesIndex, termIndex, (draft) => {
+      if (attribute) {
+        if (!draft.attribute) {
+          draft.stat_type = DEFAULT_ATTRIBUTE_STAT_TYPE;
+        }
+        draft.attribute = attribute;
+      } else {
+        delete draft.attribute;
+        delete draft.stat_type;
+      }
+      statisticId = normalizeStatisticId(draft.statistic_id);
+    });
+    if (!attribute && statisticId) {
+      void this._autoSelectTermStatisticType(seriesIndex, termIndex, statisticId);
     }
   }
 
   private async _autoSelectSeriesStatisticType(index: number, statisticId: string) {
     await this._ensureStatisticMetadata([statisticId]);
     const current = this._config?.series?.[index];
-    if (!current || normalizeStatisticId(current.statistic_id) !== statisticId) {
+    if (
+      !current ||
+      current.attribute ||
+      normalizeStatisticId(current.statistic_id) !== statisticId
+    ) {
       return;
     }
     const metadata = this._getStatisticMetadata(statisticId);
@@ -4577,12 +4720,17 @@ export class EnergyCustomGraphCardEditor
     rawStatisticId: string | undefined
   ) {
     const statisticId = normalizeStatisticId(rawStatisticId);
+    let keepAttribute = false;
     this._mutateTerm(seriesIndex, termIndex, (draft) => {
       draft.statistic_id = statisticId || undefined;
       draft.constant = undefined;
-      delete draft.stat_type;
+      keepAttribute = this._entityHasAttribute(statisticId, draft.attribute);
+      if (!keepAttribute) {
+        delete draft.attribute;
+        delete draft.stat_type;
+      }
     });
-    if (statisticId) {
+    if (statisticId && !keepAttribute) {
       void this._autoSelectTermStatisticType(seriesIndex, termIndex, statisticId);
     }
   }
@@ -4594,7 +4742,11 @@ export class EnergyCustomGraphCardEditor
   ) {
     await this._ensureStatisticMetadata([statisticId]);
     const term = this._config?.series?.[seriesIndex]?.calculation?.terms?.[termIndex];
-    if (!term || normalizeStatisticId(term.statistic_id) !== statisticId) {
+    if (
+      !term ||
+      term.attribute ||
+      normalizeStatisticId(term.statistic_id) !== statisticId
+    ) {
       return;
     }
     const metadata = this._getStatisticMetadata(statisticId);
