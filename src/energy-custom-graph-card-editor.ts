@@ -1071,13 +1071,15 @@ export class EnergyCustomGraphCardEditor
     if (source === "calculation") {
       const terms = series.calculation?.terms ?? [];
       for (const term of terms) {
-        if (!normalizeStatisticId(term.statistic_id) || term.attribute?.trim()) {
+        if (!normalizeStatisticId(term.statistic_id)) {
           continue;
         }
-        const issue = this._getStatisticIssue(
-          term.statistic_id,
-          term.stat_type ?? series.stat_type
-        );
+        const issue = term.attribute?.trim()
+          ? this._getAttributeIssue(term.statistic_id)
+          : this._getStatisticIssue(
+              term.statistic_id,
+              term.stat_type ?? series.stat_type
+            );
         if (issue) {
           return issue;
         }
@@ -1085,9 +1087,23 @@ export class EnergyCustomGraphCardEditor
       return undefined;
     }
     if (series.attribute?.trim()) {
-      return undefined;
+      return this._getAttributeIssue(series.statistic_id);
     }
     return this._getStatisticIssue(series.statistic_id, series.stat_type);
+  }
+
+  // Attribute series read recorder history, so statistic metadata and stat type
+  // support do not apply; only the entity itself must exist.
+  private _getAttributeIssue(statisticId: string | undefined): EditorIssue | undefined {
+    const id = normalizeStatisticId(statisticId);
+    if (!id || this.hass?.states?.[id]) {
+      return undefined;
+    }
+    return {
+      severity: "warning",
+      cause: "Unknown entity",
+      action: "Check the ID",
+    };
   }
 
   private _renderEditorHelpHint(
@@ -2584,7 +2600,9 @@ export class EnergyCustomGraphCardEditor
     const id = normalizeStatisticId(series.statistic_id);
     const attribute = series.attribute?.trim() || undefined;
     const resolution = this._resolveStatisticSource(id);
-    const issue = attribute ? undefined : this._getStatisticIssue(id, series.stat_type);
+    const issue = attribute
+      ? this._getAttributeIssue(id)
+      : this._getStatisticIssue(id, series.stat_type);
     const metadata = resolution.metadata;
     const statTypeDisabled = !metadata && !attribute;
     const current = attribute
@@ -2922,7 +2940,9 @@ export class EnergyCustomGraphCardEditor
     const id = normalizeStatisticId(term.statistic_id);
     const attribute = term.attribute?.trim() || undefined;
     const resolution = this._resolveStatisticSource(id);
-    const issue = attribute ? undefined : this._getStatisticIssue(id, term.stat_type);
+    const issue = attribute
+      ? this._getAttributeIssue(id)
+      : this._getStatisticIssue(id, term.stat_type);
     const metadata = resolution.metadata;
     const statTypeDisabled = !metadata && !attribute;
     const current = attribute
