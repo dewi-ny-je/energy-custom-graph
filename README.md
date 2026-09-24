@@ -318,10 +318,10 @@ The Home Assistant energy date picker's compare feature is not supported for cha
 
 #### Entity attribute series
 
-Set `attribute` next to `statistic_id` to plot a numeric attribute of an entity, for example the current temperature of a climate entity. Home Assistant does not keep long-term statistics for attributes, so the card reads them from recorder history (with attributes) and aggregates them itself:
+Set `attribute` next to `statistic_id` to plot a numeric attribute of an entity, for example the current temperature of a climate entity. Home Assistant does not keep long-term statistics for attributes, so the card reads them from raw history (with attributes) and aggregates them itself:
 
-- With `raw` aggregation every attribute change is one point.
-- With a statistic aggregation (`5minute`, `hour`, `day`, …) the card builds buckets like the recorder: `mean` is time-weighted, `min` / `max` are the extremes, `state` / `sum` are the last value, and `change` is the difference between the last value and the value at the start of the bucket.
+- With the `raw` aggregation interval every attribute change is one point.
+- With the `5minute`, `hour`, `day`, `week`, `month` or `year` aggregation interval, the card computes each interval like the recorder: `mean` is time-weighted, `min` / `max` are the extremes, `state` / `sum` are the last value, and `change` is the last value minus the value at the start of the interval.
 
 ```yaml
 series:
@@ -334,11 +334,12 @@ series:
 
 Notes:
 
-- Attribute series are limited by the recorder's history retention (`purge_keep_days`, default 10 days). Older ranges have no data.
+- Attribute series are limited by the recorder's history retention (`purge_keep_days`, default 10 days). Older timespans have no data.
 - Attributes carry no unit; set `y_axes[].unit` if you want one shown.
 - Attribute changes are always requested with `significant_changes_only: false`, independent of `raw_options`.
 - Numeric strings and booleans (`on/off`, `true/false`) are converted like entity states. Non-numeric values render as gaps.
 - `attribute` also works in calculation terms.
+- With `time_offset`, attribute series load raw history from the source timespan and aggregate it the same way.
 
 #### Calculated series
 
